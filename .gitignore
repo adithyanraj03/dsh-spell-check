@@ -37,3 +37,4 @@ dsh-image-gen/
 
 # Profile lockfile pnpm leaves behind; this package has no dependencies
 pnpm-lock.yaml
+.relnotes.md
