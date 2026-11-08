@@ -1,0 +1,13 @@
+# dsh-spell-check bundle patch: mount the host half as a NEW loader row.
+#
+# This must be an `insert:` list, not a top-level `- id:` entry. A top-level
+# entry with an `id` targets an EXISTING row to override it, so dsh aborts with
+# `patch: entry "spell-check" not found` before the plugin ever loads.
+#
+# `name` MUST equal the package name: the loader imports that specifier, and
+# `id` is the plugin's storage/prompt/effect key (keep it stable once released).
+- insert:
+    - id: spell-check
+      name: 'dsh-spell-check'
+      config:
+        enabled: true

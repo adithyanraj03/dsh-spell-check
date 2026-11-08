@@ -1,0 +1,311 @@
+/**
+ * Client-half test: `node scripts/test-client.mjs`.
+ *
+ * Loads src/client.js the way dsh does — through `window.__ModuleLoader__` —
+ * with a stubbed React and DOM, then drives it against a fake context.
+ *
+ * It asserts the three things that were actually broken or missing:
+ *   1. the module loads and registers (the ESM `preact` version did not),
+ *   2. the EMBEDDED dictionary corrects without any host half,
+ *   3. the controller publishes a suggestion, so the chip and Tab have
+ *      something to accept.
+ */
+
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const here = dirname(fileURLToPath(import.meta.url))
+
+let passed = 0
+const failures = []
+function check(name, condition, detail) {
+  if (condition) {
+    passed += 1
+    return
+  }
+  failures.push(name + (detail === undefined ? '' : ` — ${detail}`))
+}
+
+/* --- stub DOM --------------------------------------------------------- */
+
+const listeners = []
+const styles = []
+
+const fakeElement = (tag) => {
+  const node = {
+    tagName: tag,
+    className: '',
+    style: {},
+    children: [],
+    classList: { add() {}, remove() {}, contains: () => false },
+    attributes: {},
+    parentNode: null,
+    firstChild: null,
+    offsetWidth: 120,
+    textContent: '',
+    appendChild(child) {
+      this.children.push(child)
+      child.parentNode = this
+      this.firstChild = this.children[0]
+      return child
+    },
+    removeChild(child) {
+      this.children = this.children.filter((c) => c !== child)
+      child.parentNode = null
+      this.firstChild = this.children[0] ?? null
+      return child
+    },
+    setAttribute(key, value) {
+      this.attributes[key] = value
+    },
+    getAttribute(key) {
+      return this.attributes[key] ?? null
+    },
+    // The underliner draws on a canvas; the stub only has to not throw.
+    getContext: () => ({
+      setTransform() {},
+      clearRect() {},
+      beginPath() {},
+      moveTo() {},
+      quadraticCurveTo() {},
+      stroke() {},
+      strokeStyle: '',
+      lineWidth: 0,
+      lineCap: '',
+    }),
+    addEventListener() {},
+    removeEventListener() {},
+    contains() {
+      return true
+    },
+    remove() {
+      this.parentNode = null
+    },
+    dispatchEvent() {
+      return true
+    },
+    closest() {
+      return null
+    },
+  }
+  return node
+}
+
+globalThis.Node = class Node {}
+globalThis.NodeFilter = { SHOW_TEXT: 4 }
+globalThis.Element = class Element {
+  closest() {
+    return null
+  }
+}
+globalThis.document = {
+  head: { appendChild: (node) => styles.push(node) },
+  body: { appendChild: (node) => { node.parentNode = { body: true } } },
+  createElement: fakeElement,
+  createTreeWalker: () => ({ nextNode: () => null }),
+  createRange: () => ({
+    setStart() {},
+    setEnd() {},
+    selectNodeContents() {},
+    collapse() {},
+    getBoundingClientRect: () => ({ top: 100, left: 120, width: 0, height: 0 }),
+    toString: () => '',
+  }),
+  getElementById: () => null,
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  addEventListener: (type) => listeners.push(type),
+  removeEventListener: (type) => {
+    const index = listeners.indexOf(type)
+    if (index !== -1) listeners.splice(index, 1)
+  },
+  execCommand: () => true,
+}
+globalThis.window = {
+  innerWidth: 1440,
+  innerHeight: 900,
+  setTimeout: (fn) => {
+    fn()
+    return 1
+  },
+  clearTimeout: () => {},
+  addEventListener: (type) => listeners.push('win:' + type),
+  removeEventListener: (type) => {
+    const index = listeners.indexOf('win:' + type)
+    if (index !== -1) listeners.splice(index, 1)
+  },
+  getSelection: () => null,
+}
+globalThis.InputEvent = class InputEvent {
+  constructor(type) {
+    this.type = type
+  }
+}
+
+/* --- stub React ------------------------------------------------------- */
+
+const effectCleanups = []
+const React = {
+  createElement: (type, props, ...children) => ({ type, props, children }),
+  useState: (initial) => [initial, () => {}],
+  useRef: (initial) => ({ current: initial ?? null }),
+  useEffect: (fn) => {
+    const cleanup = fn()
+    if (typeof cleanup === 'function') effectCleanups.push(cleanup)
+  },
+}
+
+/* --- load the module the way dsh does --------------------------------- */
+
+let loaded = null
+globalThis.window.__ModuleLoader__ = {
+  load: (entry) => {
+    loaded = entry
+  },
+}
+
+const source = readFileSync(join(here, '..', 'src', 'client.js'), 'utf8')
+await import('data:text/javascript;base64,' + Buffer.from(source, 'utf8').toString('base64'))
+
+check('module registers with the loader', loaded !== null)
+check('registered id is the package name', loaded?.id === 'dsh-spell-check', String(loaded?.id))
+
+const required = []
+const moduleExports = loaded.factory((specifier) => {
+  required.push(specifier)
+  if (specifier === 'react') return React
+  throw new Error('unexpected require: ' + specifier)
+})
+
+check('factory requires only react', required.length === 1 && required[0] === 'react', JSON.stringify(required))
+check('exports apply', typeof moduleExports.apply === 'function')
+check(
+  'declares the services it touches',
+  moduleExports.inject.join(',') === 'slots,conversation,sessions',
+  JSON.stringify(moduleExports.inject),
+)
+check('exposes the engine for tests', typeof moduleExports.engine?.suggest === 'function')
+check('exposes the controller for tests', typeof moduleExports.createController === 'function')
+
+/* --- the embedded dictionary works with NO host ----------------------- */
+
+const engine = moduleExports.engine
+check('embedded dictionary is large', engine.size >= 10000, String(engine.size))
+
+const theh = engine.suggest('theh')
+check('embedded engine corrects "theh"', theh[0]?.word === 'the', JSON.stringify(theh))
+const conn = engine.suggest('conntextion')
+check('embedded engine corrects "conntextion"', conn[0]?.word === 'connection', JSON.stringify(conn))
+check('embedded engine ignores a correct word', engine.suggest('connection').length === 0)
+check('embedded engine ignores acronyms', engine.suggest('DSH').length === 0)
+
+/* --- apply ------------------------------------------------------------ */
+
+const registrations = []
+let mountedContribution = null
+
+const ctx = {
+  remote: {
+    $mount: async (contribution) => {
+      mountedContribution = contribution
+      return () => {}
+    },
+  },
+  slots: {
+    inject: (key, callback) => {
+      callback()
+      return () => {}
+    },
+    register: (config, component) => {
+      registrations.push({ config, component })
+      return () => {}
+    },
+  },
+  effect: (fn) => {
+    const dispose = fn()
+    if (typeof dispose === 'function') effectCleanups.push(dispose)
+  },
+}
+
+moduleExports.apply(ctx)
+
+check('registers exactly one slot occupant', registrations.length === 1, String(registrations.length))
+check('occupant id', registrations[0]?.config?.id === 'spell-check', String(registrations[0]?.config?.id))
+check('occupant sits in the composer row', registrations[0]?.config?.name === 'conversation.input.right')
+check('occupant is a component', typeof registrations[0]?.component === 'function')
+check('styles injected once', styles.length === 1, String(styles.length))
+check('styles carry the strip rules', String(styles[0]?.textContent ?? '').includes('.sp-strip'))
+check('host link is attempted but optional', mountedContribution !== null)
+
+/* --- mount: no visual chrome + listeners ------------------------------ */
+
+const element = registrations[0].component()
+// The seat is activation only: the user asked for no chip in the message bar,
+// so the composer row must stay exactly as it was.
+check('renders nothing in the composer bar', element === null || element === undefined, JSON.stringify(element))
+
+for (const event of ['input', 'keydown', 'selectionchange', 'mousedown', 'win:resize', 'win:scroll']) {
+  check(`listens for ${event}`, listeners.includes(event), JSON.stringify(listeners))
+}
+
+/* --- the controller publishes what Tab accepts ------------------------ */
+
+const controller = moduleExports.createController(ctx)
+const seen = []
+controller.subscribe((state) => seen.push(state))
+check('subscribe replays the current state', seen.length === 1 && seen[0].suggestions.length === 0, JSON.stringify(seen[0]))
+
+// `check` is the same path a keystroke takes after its debounce: it stores the
+// token, asks the embedded engine, and publishes to the chip.
+const fakeToken = {
+  text: 'theh',
+  startOffset: 0,
+  endOffset: 4,
+  node: fakeElement('div'),
+  range: { getBoundingClientRect: () => ({ top: 100, left: 120, width: 0, height: 0 }) },
+}
+controller.check(fakeToken)
+const latest = seen[seen.length - 1]
+check('controller publishes the typed word', latest.word === 'theh', JSON.stringify(latest.word))
+check('controller publishes a suggestion', latest.suggestions[0]?.word === 'the', JSON.stringify(latest.suggestions))
+check('controller publishes a Tab-ready active index', latest.active === 0)
+
+// A correct word publishes nothing to accept.
+controller.check({ ...fakeToken, text: 'connection' })
+check(
+  'controller clears the offer for a correct word',
+  seen[seen.length - 1].suggestions.length === 0,
+  JSON.stringify(seen[seen.length - 1]),
+)
+
+/* --- attach/detach, and the single-controller rule -------------------- */
+
+// The mounted component above already owns a controller. Attaching another must
+// DISPOSE the first rather than run two of them side by side: that duplication
+// is what produced two strips on screen, one of which ignored every click.
+const attachable = moduleExports.createController(ctx)
+const detach = attachable.attach()
+check(
+  'only one controller listens at a time',
+  listeners.filter((event) => event === 'input').length === 1,
+  JSON.stringify(listeners),
+)
+check('the newest controller claims the window slot', globalThis.window.__dshSpellCheck?.controller === attachable)
+detach()
+check(
+  'detach removes its listeners',
+  listeners.filter((event) => event === 'input').length === 0,
+  JSON.stringify(listeners),
+)
+check('detach releases the window slot', globalThis.window.__dshSpellCheck === undefined)
+
+/* --- unmount ---------------------------------------------------------- */
+
+for (const cleanup of effectCleanups) cleanup()
+
+console.log(`\n${passed} passed, ${failures.length} failed`)
+if (failures.length > 0) {
+  for (const failure of failures) console.log('  FAIL ' + failure)
+  process.exitCode = 1
+}

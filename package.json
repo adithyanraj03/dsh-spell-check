@@ -1,0 +1,79 @@
+{
+  "name": "dsh-spell-check",
+  "version": "0.2.0",
+  "description": "Chrome-style spell check for the dsh composer: the misspelled word under the caret gets a suggestion strip, and Tab accepts it. Local only — no network, no LLM, no telemetry.",
+  "icon": "assets/icon.png",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./engine": "./src/engine.js",
+    "./client": "./src/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/index.js",
+    "src/engine.js",
+    "src/client.js",
+    "assets/words.txt",
+    "assets/banner-light.png",
+    "assets/strip.gif",
+    "assets/strip.png",
+    "assets/menu.png",
+    "assets/banner-dark.png",
+    "assets/icon.png",
+    "cordis.patch.yml",
+    "dsh.plugin.json",
+    "scripts/test-engine.mjs",
+    "scripts/test-host.mjs",
+    "scripts/test-client.mjs",
+    "scripts/build-client.mjs",
+    "scripts/check-styles.mjs",
+    "scripts/make-banner.py",
+    "scripts/make-media.py",
+    "README.md",
+    "LICENSE",
+    "screenshots.json"
+  ],
+  "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "test": "node scripts/check-styles.mjs && node scripts/test-engine.mjs && node scripts/test-host.mjs && node scripts/test-client.mjs",
+    "test:engine": "node scripts/test-engine.mjs",
+    "test:host": "node scripts/test-host.mjs",
+    "test:client": "node scripts/test-client.mjs",
+    "test:styles": "node scripts/check-styles.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "main": "./src/client.js"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "deepseek-harness",
+    "spellcheck",
+    "spell-check",
+    "autocorrect",
+    "typo",
+    "offline"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adithyanraj03/dsh-spell-check.git"
+  },
+  "homepage": "https://adithyanraj03.github.io/dsh-spell-check/",
+  "bugs": {
+    "url": "https://github.com/adithyanraj03/dsh-spell-check/issues"
+  },
+  "author": "Adithya N Raj (adithyanraj03)",
+  "license": "MIT"
+}

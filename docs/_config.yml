@@ -1,0 +1,4 @@
+theme: jekyll-theme-cayman
+title: dsh-spell-check
+description: Chrome-style local spell check for the DeepSeek Harness composer.
+show_downloads: false
