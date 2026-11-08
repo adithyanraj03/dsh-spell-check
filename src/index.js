@@ -77,7 +77,7 @@ function getEngine() {
       let words = []
       try {
         const raw = await readFile(WORDS_PATH, 'utf8')
-        words = raw.split('\n').map((line) => line.trim()).filter(Boolean)
+        words = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
       } catch {
         // No word list: the typo map alone still gives the useful behaviour.
         words = []

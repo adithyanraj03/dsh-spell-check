@@ -1,0 +1,13 @@
+# Keep the shipped word list byte-identical across checkouts.
+#
+# Git's autocrlf rewrites text files to CRLF on Windows, and the dictionary is
+# read by splitting on "\n": every word then carried a trailing \r, which made
+# `the` fail an equality check and every entry fail a [a-z] test. A clean clone
+# on Windows was shipping a dictionary that matched nothing.
+* text=auto eol=lf
+
+# Binaries must never be touched.
+*.png binary
+*.gif binary
+*.jpg binary
+*.ico binary

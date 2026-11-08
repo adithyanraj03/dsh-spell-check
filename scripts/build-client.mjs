@@ -27,7 +27,7 @@ const BEGIN = '/* >>> GENERATED ENGINE BLOCK'
 const END = '/* <<< GENERATED ENGINE BLOCK <<< */'
 
 const words = readFileSync(join(root, 'assets', 'words.txt'), 'utf8')
-  .split('\n')
+  .split(/\r?\n/)
   .map((line) => line.trim())
   .filter(Boolean)
 
@@ -43,7 +43,7 @@ const EXTRA = join(root, 'assets', 'words-extra.txt')
 let extra = []
 if (existsSync(EXTRA)) {
   extra = readFileSync(EXTRA, 'utf8')
-    .split('\n')
+    .split(/\r?\n/)
     .map((line) => line.trim().toLowerCase())
     // Hunspell dictionaries carry an affix marker after a slash (walk/ed) and
     // SCOWL uses a similar suffix; only the plain headword is a word here.
@@ -66,7 +66,7 @@ if (words.length === 0) {
  * by convention, so this stays a formatting rule rather than a parser.
  */
 const engineSource = readFileSync(join(root, 'src', 'engine.js'), 'utf8')
-  .split('\n')
+  .split(/\r?\n/)
   .filter((line) => !line.startsWith('export default'))
   .map((line) => (line.startsWith('export ') ? line.slice('export '.length) : line))
   .join('\n')
