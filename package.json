@@ -1,6 +1,6 @@
 {
   "name": "dsh-spell-check",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Chrome-style spell check for the dsh composer: the misspelled word under the caret gets a suggestion strip, and Tab accepts it. Local only — no network, no LLM, no telemetry.",
   "icon": "assets/icon.png",
   "type": "module",
@@ -75,5 +75,16 @@
     "url": "https://github.com/adithyanraj03/dsh-spell-check/issues"
   },
   "author": "Adithya N Raj (adithyanraj03)",
-  "license": "MIT"
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-typert-protocol": ">=0.1.0-rc.6"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-typert-protocol": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.1"
+  }
 }

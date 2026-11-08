@@ -22,7 +22,6 @@
  * @module dsh-spell-check
  */
 
-import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -135,59 +134,84 @@ export async function learnWord(word) {
   return { word: String(word ?? '').toLowerCase(), added }
 }
 
-class SpellCheckRemote extends TypertRemoteService {
-  constructor(ownerCtx) {
-    super(ownerCtx, 'spellCheck')
+/**
+ * The Remote service, built on a DYNAMIC import.
+ *
+ * `@deepseek-ai/dsh-typert-protocol` is provided by the host, not vendored here,
+ * so importing it at module scope makes the whole file unloadable anywhere the
+ * host's packages are not on the resolution path — including a clean `git clone`
+ * running `npm test`, which is exactly how a broken tarball ships unnoticed.
+ *
+ * The browser half already does every suggestion locally, so a host without the
+ * protocol package loses only the learned-word persistence. Failing softly is
+ * the right trade: a plugin that still corrects, rather than one that does not
+ * load at all.
+ */
+async function mountRemoteService(ctx) {
+  let protocol
+  try {
+    protocol = await import('@deepseek-ai/dsh-typert-protocol')
+  } catch {
+    ctx.logger?.warn?.('dsh-spell-check: host protocol unavailable; learned words will not persist')
+    return
   }
 
-  /**
-   * Ranked corrections for one typed token.
-   *
-   * Answers `{ suggestions: [] }` for a correctly spelled word — that is the
-   * common case, and it is what stops the popup nagging about real words.
-   */
-  suggest(word) {
-    return suggestWord(word)
+  const { Remote, TypertRemoteService } = protocol
+
+  class SpellCheckRemote extends TypertRemoteService {
+    constructor(ownerCtx) {
+      super(ownerCtx, 'spellCheck')
+    }
+
+    /**
+     * Ranked corrections for one typed token.
+     *
+     * Answers `{ suggestions: [] }` for a correctly spelled word — that is the
+     * common case, and it is what stops the popup nagging about real words.
+     */
+    suggest(word) {
+      return suggestWord(word)
+    }
+
+    /** Whether a token is a word we know, so the caller can skip the round trip. */
+    check(word) {
+      return checkWord(word)
+    }
+
+    /** Teach the dictionary a word. Persisted under dsh's storages directory. */
+    learn(word) {
+      return learnWord(word)
+    }
   }
 
-  /** Whether a token is a word we know, so the caller can skip the round trip. */
-  check(word) {
-    return checkWord(word)
-  }
-
-  /** Teach the dictionary a word. Persisted under dsh's storages directory. */
-  learn(word) {
-    return learnWord(word)
-  }
-}
-
-/** Emulate the @Remote decorator without decorator syntax. */
-function markRemoteMethod(prototype, method) {
-  Remote(method)(prototype[method], {
-    kind: 'method',
-    name: method,
-    static: false,
-    private: false,
-    access: {
-      has() {
-        return false
+  /** Emulate the @Remote decorator without decorator syntax. */
+  const markRemoteMethod = (prototype, method) => {
+    Remote(method)(prototype[method], {
+      kind: 'method',
+      name: method,
+      static: false,
+      private: false,
+      access: {
+        has() {
+          return false
+        },
+        get() {
+          return undefined
+        },
       },
-      get() {
-        return undefined
+      addInitializer(fn) {
+        fn.call(Object.create(prototype))
       },
-    },
-    addInitializer(fn) {
-      fn.call(Object.create(prototype))
-    },
-  })
-}
+    })
+  }
 
-markRemoteMethod(SpellCheckRemote.prototype, 'suggest')
-markRemoteMethod(SpellCheckRemote.prototype, 'check')
-markRemoteMethod(SpellCheckRemote.prototype, 'learn')
+  for (const method of ['suggest', 'check', 'learn']) markRemoteMethod(SpellCheckRemote.prototype, method)
+
+  return new SpellCheckRemote(ctx)
+}
 
 export function apply(ctx) {
-  new SpellCheckRemote(ctx)
+  void mountRemoteService(ctx).catch(() => {})
   // Warm the engine while the session starts, so the first keystroke is not
   // waiting on a 160 KB read.
   void getEngine().catch(() => {})

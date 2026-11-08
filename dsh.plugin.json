@@ -1,6 +1,6 @@
 {
   "id": "spell-check",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "main": "src/index.js",
   "description": "Chrome-style local spell check for the dsh composer",
   "engines": {
