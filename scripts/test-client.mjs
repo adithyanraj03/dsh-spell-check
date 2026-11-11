@@ -62,18 +62,30 @@ const fakeElement = (tag) => {
     getAttribute(key) {
       return this.attributes[key] ?? null
     },
-    // The underliner draws on a canvas; the stub only has to not throw.
-    getContext: () => ({
-      setTransform() {},
-      clearRect() {},
-      beginPath() {},
-      moveTo() {},
-      quadraticCurveTo() {},
-      stroke() {},
-      strokeStyle: '',
-      lineWidth: 0,
-      lineCap: '',
-    }),
+    // The underliner draws on a canvas; record the calls so a test can prove a
+    // repaint happened (the stale-underline bug was a repaint that never ran).
+    getContext() {
+      if (!this.__ctx) {
+        this.__draws = { clear: 0, stroke: 0 }
+        const draws = this.__draws
+        this.__ctx = {
+          setTransform() {},
+          clearRect() {
+            draws.clear += 1
+          },
+          beginPath() {},
+          moveTo() {},
+          quadraticCurveTo() {},
+          stroke() {
+            draws.stroke += 1
+          },
+          strokeStyle: '',
+          lineWidth: 0,
+          lineCap: '',
+        }
+      }
+      return this.__ctx
+    },
     addEventListener() {},
     removeEventListener() {},
     contains() {
@@ -99,10 +111,35 @@ globalThis.Element = class Element {
     return null
   }
 }
+
+// Observers the underliner uses to repaint when the DOM changes without a
+// keyboard event. The stubs capture the callback so a test can fire it by hand.
+const createdCanvases = []
+let queryResult = null
+let mutationCallback = null
+const intervals = []
+globalThis.MutationObserver = class {
+  constructor(callback) {
+    mutationCallback = callback
+  }
+  observe() {}
+  disconnect() {
+    mutationCallback = null
+  }
+}
+globalThis.ResizeObserver = class {
+  observe() {}
+  disconnect() {}
+}
+
 globalThis.document = {
   head: { appendChild: (node) => styles.push(node) },
   body: { appendChild: (node) => { node.parentNode = { body: true } } },
-  createElement: fakeElement,
+  createElement: (tag) => {
+    const node = fakeElement(tag)
+    if (tag === 'canvas') createdCanvases.push(node)
+    return node
+  },
   createTreeWalker: () => ({ nextNode: () => null }),
   createRange: () => ({
     setStart() {},
@@ -113,7 +150,7 @@ globalThis.document = {
     toString: () => '',
   }),
   getElementById: () => null,
-  querySelector: () => null,
+  querySelector: () => queryResult,
   querySelectorAll: () => [],
   addEventListener: (type) => listeners.push(type),
   removeEventListener: (type) => {
@@ -130,6 +167,11 @@ globalThis.window = {
     return 1
   },
   clearTimeout: () => {},
+  setInterval: (fn, ms) => {
+    intervals.push({ fn, ms })
+    return intervals.length
+  },
+  clearInterval: () => {},
   addEventListener: (type) => listeners.push('win:' + type),
   removeEventListener: (type) => {
     const index = listeners.indexOf('win:' + type)
@@ -299,6 +341,55 @@ check(
   JSON.stringify(listeners),
 )
 check('detach releases the window slot', globalThis.window.__dshSpellCheck === undefined)
+
+/* --- the stale-underline regression ----------------------------------- */
+
+// The reported bug: after pressing Enter to send, the blue underline stayed
+// floating in mid-air over the now-empty composer, and only vanished when a
+// screenshot hotkey caused an unrelated focus/resize repaint. Root cause: the
+// full-window canvas was repainted ONLY by keyboard/selection events, and a
+// programmatic draft-clear that moves focus out of the editor fires none of
+// them. These checks prove the canvas now repaints from the DOM itself.
+
+const fakeBox = { top: 100, left: 120, width: 600, height: 40 }
+const fakeEditor = {
+  textContent: 'theh',
+  getBoundingClientRect: () => fakeBox,
+}
+queryResult = fakeEditor
+
+const underliner = moduleExports.createUnderliner()
+const underlineCanvas = createdCanvases[createdCanvases.length - 1]
+const releaseUnderline = underliner.attach()
+
+check('underliner paints once on attach', underlineCanvas.__draws.clear === 1, String(underlineCanvas.__draws.clear))
+check('underliner watches the editor DOM', mutationCallback !== null)
+check('underliner exposes observe', typeof underliner.observe === 'function')
+
+// Path A — the actual bug: the draft is cleared programmatically (send) and NO
+// keyboard or selection event fires. The MutationObserver must still repaint.
+fakeEditor.textContent = ''
+mutationCallback()
+check(
+  'a programmatic clear repaints with no keyboard event',
+  underlineCanvas.__draws.clear === 2,
+  String(underlineCanvas.__draws.clear),
+)
+
+// Path B — the composer shrank/moved after send (the "mid-air" geometry). The
+// self-heal tick must notice the box changed and repaint even with no mutation.
+fakeBox.top = 40
+const heal = intervals[intervals.length - 1].fn
+heal()
+check('self-heal repaints when the editor box moves', underlineCanvas.__draws.clear === 3, String(underlineCanvas.__draws.clear))
+
+// Path C — heal is idempotent: an unchanged editor must not repaint every tick.
+heal()
+check('self-heal is a no-op when nothing changed', underlineCanvas.__draws.clear === 3, String(underlineCanvas.__draws.clear))
+
+releaseUnderline()
+check('detach disconnects the DOM observer', mutationCallback === null)
+queryResult = null
 
 /* --- unmount ---------------------------------------------------------- */
 

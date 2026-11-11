@@ -9,7 +9,7 @@
 
 [English](README.md) | 中文
 
-![language](https://img.shields.io/badge/language-javascript-f7dc6f) ![license](https://img.shields.io/badge/license-MIT-blue) ![node](https://img.shields.io/badge/node-%E2%89%A5%2022-brightgreen) ![dsh](https://img.shields.io/badge/dsh-web%20profile-orange) ![runtime](https://img.shields.io/badge/runtime-offline_%C2%B7_100%25_local-brightgreen) ![tests](https://img.shields.io/badge/tests-129%20checks-brightgreen) ![npm](https://img.shields.io/npm/v/dsh-spell-check)
+![language](https://img.shields.io/badge/language-javascript-f7dc6f) ![license](https://img.shields.io/badge/license-MIT-blue) ![node](https://img.shields.io/badge/node-%E2%89%A5%2022-brightgreen) ![dsh](https://img.shields.io/badge/dsh-web%20profile-orange) ![runtime](https://img.shields.io/badge/runtime-offline_%C2%B7_100%25_local-brightgreen) ![tests](https://img.shields.io/badge/tests-136%20checks-brightgreen) ![npm](https://img.shields.io/npm/v/dsh-spell-check)
 
 一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件，像 Chrome 那样给输入框做拼写检查：正在输入的词会边打边查，改错时手不用离开键盘。
 

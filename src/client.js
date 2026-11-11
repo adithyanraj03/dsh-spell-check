@@ -1420,6 +1420,64 @@ function createEngine(words, typoMap = TYPO_MAP) {
       canvas.className = "sp-underline";
       canvas.setAttribute("aria-hidden", "true");
       let timer = null;
+      // The canvas is fixed and full-window, and every mark is painted at an
+      // absolute viewport coordinate. That means it is only correct at the
+      // instant it is painted: the moment the editor's text or geometry changes
+      // without a repaint, the old marks hang in the air like an imprint.
+      //
+      // Keyboard and selection events are NOT enough to keep it correct. Sending
+      // a message clears the draft programmatically and usually moves focus out
+      // of the composer, so no `keyup`/`selectionchange` fires a repaint — the
+      // exact "underline stays after I press Enter" bug. These observers watch
+      // the DOM and the box directly, so a clear or a resize repaints regardless
+      // of where focus went.
+      let mutationObserver = null;
+      let resizeObserver = null;
+      let observedEditor = null;
+      let lastSignature = "";
+      let healTimer = null;
+
+      const EDITOR_SELECTOR = '[data-lexical-editor="true"][contenteditable="true"]';
+
+      /** A cheap fingerprint of "what the canvas should currently show". */
+      function signature(editor) {
+        if (editor === null || editor === undefined) return "";
+        let rect = null;
+        try {
+          rect = editor.getBoundingClientRect();
+        } catch {
+          rect = null;
+        }
+        const box = rect
+          ? Math.round(rect.left) + "," + Math.round(rect.top) + "," + Math.round(rect.width) + "," + Math.round(rect.height)
+          : "0";
+        // Length, not the whole string: a clear (→0), an edit, a remount or a
+        // resize all change it, and it stays O(1) to compare on every heal tick.
+        return (editor.textContent ?? "").length + ":" + box;
+      }
+
+      /** Keep the observers pointed at the live editor, even across remounts. */
+      function observe(editor) {
+        if (editor === observedEditor) return;
+        observedEditor = editor;
+        if (mutationObserver !== null) {
+          mutationObserver.disconnect();
+          mutationObserver = null;
+        }
+        if (resizeObserver !== null) {
+          resizeObserver.disconnect();
+          resizeObserver = null;
+        }
+        if (editor === null || editor === undefined) return;
+        if (typeof MutationObserver !== "undefined") {
+          mutationObserver = new MutationObserver(() => schedule(50));
+          mutationObserver.observe(editor, { childList: true, characterData: true, subtree: true });
+        }
+        if (typeof ResizeObserver !== "undefined") {
+          resizeObserver = new ResizeObserver(() => schedule(50));
+          resizeObserver.observe(editor);
+        }
+      }
 
       function ensure() {
         if (canvas.parentNode === null) document.body.appendChild(canvas);
@@ -1451,7 +1509,9 @@ function createEngine(words, typoMap = TYPO_MAP) {
 
       /** Repaint every misspelled word currently laid out in the editor. */
       function paint() {
-        const editor = document.querySelector('[data-lexical-editor="true"][contenteditable="true"]');
+        const editor = document.querySelector(EDITOR_SELECTOR);
+        observe(editor);
+        lastSignature = signature(editor);
         const ratio = ensure();
         const context = canvas.getContext("2d");
         if (context === null) return;
@@ -1525,14 +1585,39 @@ function createEngine(words, typoMap = TYPO_MAP) {
         timer = window.setTimeout(paint, delay);
       }
 
+      /**
+       * Safety net for any change no event announced.
+       *
+       * The observers above catch the common cases immediately; this catches the
+       * rest — an editor remounted onto a new node, a programmatic clear that
+       * raced focus, a layout shift — by comparing a cheap fingerprint and
+       * repainting only when it actually changed. Without it, a single missed
+       * event left a permanent imprint until the next unrelated repaint.
+       */
+      function heal() {
+        const editor = document.querySelector(EDITOR_SELECTOR);
+        if (signature(editor) !== lastSignature) paint();
+      }
+
       return {
         schedule,
         paint,
+        observe,
         attach() {
           ensure();
           schedule(0);
+          if (typeof window.setInterval === "function") {
+            healTimer = window.setInterval(heal, 400);
+          }
           return () => {
             window.clearTimeout(timer);
+            if (healTimer !== null && typeof window.clearInterval === "function") {
+              window.clearInterval(healTimer);
+              healTimer = null;
+            }
+            if (mutationObserver !== null) mutationObserver.disconnect();
+            if (resizeObserver !== null) resizeObserver.disconnect();
+            observedEditor = null;
             canvas.remove();
           };
         },
@@ -1626,6 +1711,7 @@ function createEngine(words, typoMap = TYPO_MAP) {
         // The underlines follow every keystroke; the strip follows only the
         // word under the caret.
         silenceNativeSpellcheck(editor);
+        underliner.observe(editor);
         underliner.schedule();
         const at = tokenAtCaret(editor);
         if (at === null) {
@@ -1985,6 +2071,11 @@ function createEngine(words, typoMap = TYPO_MAP) {
       }
 
       function onViewportChange() {
+        // The underline canvas is fixed and full-window with marks at absolute
+        // viewport coordinates, so a scroll or resize detaches every mark from
+        // its word until it is repainted. Repaint unconditionally, not only when
+        // the strip happens to be visible.
+        underliner.schedule();
         if (visible) position();
       }
 
@@ -2229,6 +2320,7 @@ function createEngine(words, typoMap = TYPO_MAP) {
     // Exported for the test harness only; never read by dsh.
     exports.engine = ENGINE;
     exports.createController = createController;
+    exports.createUnderliner = createUnderliner;
 
     return module.exports;
   },

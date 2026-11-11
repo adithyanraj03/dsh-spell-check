@@ -1,6 +1,6 @@
 {
   "name": "dsh-spell-check",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Chrome-style spell check for the dsh composer: the misspelled word under the caret gets a suggestion strip, and Tab accepts it. Local only — no network, no LLM, no telemetry.",
   "icon": "assets/icon.png",
   "type": "module",
