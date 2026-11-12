@@ -1144,6 +1144,27 @@ function createEngine(words, typoMap = TYPO_MAP) {
      * Only a collapsed caret inside a text node counts: a selection is
      * "replace these words", not "spell this word".
      */
+    /**
+     * The character immediately before a token, resolved across node boundaries.
+     *
+     * A mention trigger can sit in a previous node (Lexical renders `@` and the
+     * typed query in separate spans), so reading only the current text node
+     * would miss it. When the token starts mid-node the answer is local; only a
+     * token at the very start of its node needs the wider lookbehind.
+     */
+    function precedingChar(editor, node, tokenStart) {
+      if (tokenStart > 0) return node.data.charAt(tokenStart - 1);
+      try {
+        const lead = document.createRange();
+        lead.selectNodeContents(editor);
+        lead.setEnd(node, 0);
+        const text = lead.toString();
+        return text.charAt(text.length - 1);
+      } catch {
+        return "";
+      }
+    }
+
     function tokenAtCaret(editor) {
       const selection = window.getSelection();
       if (selection === null || selection.rangeCount === 0 || !selection.isCollapsed) return null;
@@ -1153,14 +1174,20 @@ function createEngine(words, typoMap = TYPO_MAP) {
       if (!editor.contains(node)) return null;
       const offset = range.startOffset;
       const before = node.data.slice(0, offset);
-      // A trailing apostrophe or dash is part of the word (dont, well-known),
-      // but the token must START with a letter, so @mentions and /commands are
-      // never treated as words.
+      // A trailing apostrophe or dash is part of the word (dont, well-known).
       const match = /([A-Za-z][A-Za-z'\u2019-]*)$/.exec(before);
       if (match === null) return null;
+      const tokenStart = offset - match[1].length;
+      // An @mention or /command is NOT prose. While one is being typed the
+      // composer's own picker owns Tab and the arrow keys; offering a strip here
+      // both covered that picker and stole its navigation. Suppress the token
+      // so no strip appears and no key is intercepted. (This also leaves email
+      // domains and slash-joined paths alone, which is the desired behaviour.)
+      const trigger = precedingChar(editor, node, tokenStart);
+      if (trigger === "@" || trigger === "/") return null;
       return {
         text: match[1],
-        startOffset: offset - match[1].length,
+        startOffset: tokenStart,
         endOffset: offset,
         node,
         range,
@@ -1553,7 +1580,13 @@ function createEngine(words, typoMap = TYPO_MAP) {
             const word = match[0];
             if (word.length < 3) continue;
             if (word === word.toUpperCase()) continue; // acronym
-            if (inFence(absolute + match.index)) continue;
+            const globalIndex = absolute + match.index;
+            if (inFence(globalIndex)) continue;
+            // Skip @mentions and /commands: the character before the word is the
+            // trigger. Read it from the whole draft so a trigger in a previous
+            // node still counts, matching the caret-token rule exactly.
+            const trigger = globalIndex > 0 ? text.charAt(globalIndex - 1) : "";
+            if (trigger === "@" || trigger === "/") continue;
             let wrong = false;
             try {
               wrong = ENGINE.suggest(word).length > 0;
@@ -2321,6 +2354,7 @@ function createEngine(words, typoMap = TYPO_MAP) {
     exports.engine = ENGINE;
     exports.createController = createController;
     exports.createUnderliner = createUnderliner;
+    exports.tokenAtCaret = tokenAtCaret;
 
     return module.exports;
   },

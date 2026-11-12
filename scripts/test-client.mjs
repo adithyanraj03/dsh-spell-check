@@ -118,6 +118,10 @@ const createdCanvases = []
 let queryResult = null
 let mutationCallback = null
 const intervals = []
+// Controllable selection + lead text so a test can place the caret in an
+// @mention / /command and prove the token (and therefore the strip) is suppressed.
+let selectionStub = null
+let leadText = ''
 globalThis.MutationObserver = class {
   constructor(callback) {
     mutationCallback = callback
@@ -147,7 +151,7 @@ globalThis.document = {
     selectNodeContents() {},
     collapse() {},
     getBoundingClientRect: () => ({ top: 100, left: 120, width: 0, height: 0 }),
-    toString: () => '',
+    toString: () => leadText,
   }),
   getElementById: () => null,
   querySelector: () => queryResult,
@@ -177,7 +181,7 @@ globalThis.window = {
     const index = listeners.indexOf('win:' + type)
     if (index !== -1) listeners.splice(index, 1)
   },
-  getSelection: () => null,
+  getSelection: () => selectionStub,
 }
 globalThis.InputEvent = class InputEvent {
   constructor(type) {
@@ -390,6 +394,56 @@ check('self-heal is a no-op when nothing changed', underlineCanvas.__draws.clear
 releaseUnderline()
 check('detach disconnects the DOM observer', mutationCallback === null)
 queryResult = null
+
+/* --- @mention / /command suppression ---------------------------------- */
+
+// The reported bug: typing `@Modu` opened the composer's file picker, but the
+// spellcheck strip also appeared over it and stole Tab/arrows. The caret token
+// must be suppressed whenever it is preceded by @ or /, so no strip shows and
+// no key is intercepted while the picker owns navigation. A null token makes
+// schedule() hide the strip and publish zero suggestions, which is exactly the
+// condition under which onKeyDown early-returns and leaves Tab/arrows alone.
+
+const tokenAtCaret = moduleExports.tokenAtCaret
+const mentionEditor = fakeElement('div') // contains() => true
+const caretIn = (data, offset) => {
+  const node = { nodeType: 3, data }
+  selectionStub = {
+    rangeCount: 1,
+    isCollapsed: true,
+    getRangeAt: () => ({ startContainer: node, startOffset: offset }),
+  }
+  return node
+}
+
+check('exposes tokenAtCaret for tests', typeof tokenAtCaret === 'function')
+
+caretIn('@Modu', 5)
+check('@mention token is suppressed', tokenAtCaret(mentionEditor) === null)
+
+caretIn('now need to do @Modu', 20)
+check('@mention mid-sentence is suppressed', tokenAtCaret(mentionEditor) === null)
+
+caretIn('/comm', 5)
+check('/command token is suppressed', tokenAtCaret(mentionEditor) === null)
+
+caretIn('Modu', 4)
+check('a plain word is still a token', tokenAtCaret(mentionEditor)?.text === 'Modu')
+
+caretIn('wether', 6)
+check('a plain misspelling is still a token', tokenAtCaret(mentionEditor)?.text === 'wether')
+
+// Trigger in a previous node: the token starts at offset 0 of its own node, so
+// the lookbehind must read the wider draft (leadText), not just the local node.
+leadText = '@'
+caretIn('Modu', 4)
+check('cross-node @ trigger is suppressed', tokenAtCaret(mentionEditor) === null)
+
+leadText = 'hello '
+caretIn('Modu', 4)
+check('cross-node plain context keeps the token', tokenAtCaret(mentionEditor)?.text === 'Modu')
+leadText = ''
+selectionStub = null
 
 /* --- unmount ---------------------------------------------------------- */
 
